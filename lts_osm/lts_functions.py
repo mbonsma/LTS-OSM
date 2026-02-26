@@ -252,7 +252,7 @@ def mixed_traffic(gdf_edges):
     # create a new column and use np.select to assign values to it using our lists as arguments
     gdf_edges['rule'] = np.select(conditions, values, default='m0')
               
-    rule_dict = {'m17':1, 'm13':1, 'm14':2, 'm2':2, 'm15':2, 'm3':2, 'm4':2, 'm16':2, 'm5':2, 'm6':3, 'm7':3, 'm8':4, 'm9':2, 'm10':3, 'm11':4, 'm12':4}
+    rule_dict = {'m17':1, 'm13':1, 'm14':2, 'm2':1, 'm15':2, 'm3':2, 'm4':2, 'm16':2, 'm5':1, 'm6':3, 'm7':3, 'm8':4, 'm9':2, 'm10':3, 'm11':4, 'm12':4}
               
     gdf_edges['lts'] = gdf_edges['rule'].map(rule_dict)
     
