@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
+import re
 
 def biking_permitted(gdf_edges):
     """
@@ -123,11 +124,48 @@ def parking_present(gdf_edges):
 def get_lanes(gdf_edges, default_lanes = 2):
 
     # make new assumed lanes column for use in calculations
-    
-    # fill na with default lanes
-    # if multiple lane values present, use the largest one
-    # this usually happens if multiple adjacent ways are included in the edge and there's a turning lane
-    gdf_edges['lanes_assumed'] = gdf_edges['lanes'].fillna(default_lanes).apply(lambda x: np.array(x, dtype = 'int')).apply(lambda x: np.max(x)) 
+
+    def parse_lanes_or_default(value):
+        if value is None:
+            return default_lanes
+
+        if isinstance(value, (list, tuple, set, np.ndarray)):
+            items = value
+        else:
+            if pd.isna(value):
+                return default_lanes
+            items = [value]
+
+        parsed = []
+        for item in items:
+            if item is None:
+                continue
+
+            if isinstance(item, (int, float, np.number)):
+                if pd.isna(item):
+                    continue
+                parsed.append(float(item))
+                continue
+
+            if isinstance(item, str):
+                # OSM lane values can be delimited (e.g. "2;1", "2|1") or decimals (e.g. "1.5").
+                for part in re.split(r"[;|,]", item):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    try:
+                        parsed.append(float(part))
+                    except ValueError:
+                        continue
+
+        if not parsed:
+            return default_lanes
+
+        # Use the largest lane value and round up to keep LTS assignment conservative.
+        return int(np.ceil(max(parsed)))
+
+    # if multiple lane values are present, use the largest parsed one
+    gdf_edges['lanes_assumed'] = gdf_edges['lanes'].apply(parse_lanes_or_default)
     
     return gdf_edges
 
@@ -153,9 +191,23 @@ def get_max_speed(gdf_edges, national=40, local=50, motorway=100, primary=80, se
 
     # create a new column and use np.select to assign values to it using our lists as arguments
     gdf_edges['maxspeed_assumed'] = np.select(conditions, values, default=gdf_edges['maxspeed'])
-    
-    # if multiple speed values present, use the largest one
-    gdf_edges['maxspeed_assumed'] = gdf_edges['maxspeed_assumed'].apply(lambda x: np.array(x, dtype = 'int')).apply(lambda x: np.max(x)) 
+
+    def parse_int_or_default(value, default_value=50):
+        if isinstance(value, (list, tuple, set, np.ndarray)):
+            parsed = []
+            for item in value:
+                try:
+                    parsed.append(int(item))
+                except (TypeError, ValueError):
+                    parsed.append(default_value)
+            return max(parsed) if parsed else default_value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default_value
+
+    # if maxspeed cannot be parsed as int, assume 50
+    gdf_edges['maxspeed_assumed'] = gdf_edges['maxspeed_assumed'].apply(lambda x: parse_int_or_default(x, local))
 
     return gdf_edges
 
@@ -170,13 +222,13 @@ def bike_lane_analysis_with_parking(gdf_edges):
     # create a list of lts conditions
     # When multiple conditions are satisfied, the first one encountered in conditions is used
     conditions = [
-        (gdf_edges['lanes_assumed'] >= 3) & (gdf_edges['maxspeed_assumed'] <= 55),
+        (gdf_edges['lanes_assumed'] >= 3) & (gdf_edges['maxspeed_assumed'] <= 56),
         (gdf_edges['width'] <= 4.1),
         (gdf_edges['width'] <= 4.25),
         (gdf_edges['width'] <= 4.5) & ((gdf_edges['maxspeed_assumed'] <= 40) & (gdf_edges['highway'] == 'residential')),
         (gdf_edges['maxspeed_assumed'] > 40) & (gdf_edges['maxspeed_assumed'] <= 50),
-        (gdf_edges['maxspeed_assumed'] > 50) & (gdf_edges['maxspeed_assumed'] <= 55),
-        (gdf_edges['maxspeed_assumed'] > 55),
+        (gdf_edges['maxspeed_assumed'] > 50) & (gdf_edges['maxspeed_assumed'] <= 56),
+        (gdf_edges['maxspeed_assumed'] > 56),
         (gdf_edges['highway'] != 'residential')
         ]
 
@@ -206,10 +258,10 @@ def bike_lane_analysis_no_parking(gdf_edges):
     # When multiple conditions are satisfied, the first one encountered in conditions is used
     width_is_float = gdf_edges["width"].map(lambda x: isinstance(x, float))
     conditions = [
-        (gdf_edges['lanes_assumed'] >= 3) & (gdf_edges['maxspeed_assumed'] <= 65),
+        (gdf_edges['lanes_assumed'] >= 3) & (gdf_edges['maxspeed_assumed'] <= 56),
         width_is_float & (gdf_edges['width'] <= 1.7),
-        (gdf_edges['maxspeed_assumed'] > 50) & (gdf_edges['maxspeed_assumed'] <= 65),
-        (gdf_edges['maxspeed_assumed'] > 65),
+        (gdf_edges['maxspeed_assumed'] > 50) & (gdf_edges['maxspeed_assumed'] <= 56),
+        (gdf_edges['maxspeed_assumed'] > 56),
         (gdf_edges['highway'] != 'residential')
         ]
 
@@ -252,7 +304,7 @@ def mixed_traffic(gdf_edges):
     # create a new column and use np.select to assign values to it using our lists as arguments
     gdf_edges['rule'] = np.select(conditions, values, default='m0')
               
-    rule_dict = {'m17':1, 'm13':1, 'm14':2, 'm2':1, 'm15':2, 'm3':2, 'm4':2, 'm16':2, 'm5':1, 'm6':3, 'm7':3, 'm8':4, 'm9':2, 'm10':3, 'm11':4, 'm12':4}
+    rule_dict = {'m17':1, 'm13':1, 'm14':2, 'm2':2, 'm15':2, 'm3':2, 'm4':2, 'm16':2, 'm5':1, 'm6':2, 'm7':3, 'm8':4, 'm9':2, 'm10':3, 'm11':4, 'm12':4}
               
     gdf_edges['lts'] = gdf_edges['rule'].map(rule_dict)
     

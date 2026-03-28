@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
         help="Path to the downloaded osm file to calculate the level of stress for",
     )
 
-    area_group = parser.add_mutually_exclusive_group()
+    area_group = parser.add_mutually_exclusive_group(required=True)
     area_group.add_argument(
         "--place",
         type=str,
