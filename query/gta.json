@@ -1,0 +1,36 @@
+{
+    "areas": [
+        {
+            "name": "brampton",
+            "wikidata_id": "Q44198"            
+        },
+        {
+            "name": "markham",
+            "wikidata_id": "Q44016"            
+        },
+        {
+            "name": "mississauga",
+            "wikidata_id": "Q50816"
+        },
+        {
+            "name": "oakville",
+            "wikidata_id": "Q424984"
+        },
+        {
+            "name": "pickering",
+            "wikidata_id": "Q386626"
+        },
+        {
+            "name": "richmond-hill",
+            "wikidata_id": "Q52998"
+        },
+        {
+            "name": "toronto",
+            "wikidata_id": "Q172"
+        },
+        {
+            "name": "toronto",
+            "wikidata_id": "Q44013"
+        }
+    ]
+}

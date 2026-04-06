@@ -1,11 +1,7 @@
-[timeout:600][out:json][maxsize:2000000000];
+[timeout:600][out:xml][maxsize:300000000];
 area
   ["$key"="$value"];
-out body;
-((way["highway"](area); - way[footway="sidewalk"](area););
-  node(w)->.h;
-  (way[footway="sidewalk"][bicycle](area); - way[footway="sidewalk"][bicycle="no"](area););
-  node(w)->.s;
-  node.h.s;
+(way["highway"]["area"!~"yes"]["access"!~"private"]["highway"!~"abandoned|bus_guideway|corridor|elevator|escalator|motor|planned|platform|proposed|raceway|steps"]["bicycle"!~"no"]["service"!~"private"](area);
+  node(w);
 );
-out;
+out body;
