@@ -79,11 +79,10 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="Path to the downloaded osm file to calculate the level of stress for",
     )
-    parser.add_argument(
-        "--place",
+    osm_file_group.add_argument(
+        "--downloaded-xml-json-map",
         type=str,
-        required=True,
-        help='Place name used to name output files. Example: --place "Toronto, Ontario"',
+        help="Path to a json file map of areas and it's downloaded xml path",
     )
     return parser.parse_args()
 
@@ -149,57 +148,16 @@ def download_osm_data_from_overpass_api(
     logger.info(f"Downloaded osm data to: {output_file_path}")
     return output_file_path
 
-def main(args: argparse.Namespace) -> int:
-    run_dir = create_run_directory(args)
-    query_file = args.query_json_file
-    place_list = args.place.strip().split(",")
-    city = place_list[0]
-    areas_processed_dict = {}
+def generate_graphml(run_dir: Path, area_name: str, osm_data_xml_path: str) -> str:
+    graphml_dir =  run_dir / "graphml"
+    graphml_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.osm_file:
-        if not os.path.isfile(args.osm_file):
-            logger.error("Invalid --osm-file path: %a", args.osm_file)
-            return 2
-        osm_data_xml_path = args.osm_file
-        logger.info("Using existing osm file %s", osm_data_xml_path)
-    elif args.query_json_file:
-        if not os.path.isfile(args.query_json_file):
-            logger.error("Invalid --query-json-file path: %a", args.query_json_file)
-            return 2
-        logger.info("Using query file %s to download osm data from overpass api", args.query_json_file)
-        query_json = json.loads(Path(query_file).read_text(encoding="utf-8"))
-        logger.info(f"Number of areas to download: {len(query_json.get("areas"))}")
-        areas_xml_list = []
-        xmls_download_dir = run_dir / "xmls"
-        xmls_download_dir.mkdir()
-        session = _make_overpass_session()
-        for area in query_json.get("areas"):
-            area_dict = {}
-            logger.info(f"Processing area: {area.get("name")}, Aread Id: {area.get("wikidata_id")}")
-            overpass_query = build_overpass_query(area.get("wikidata_id"))
-            logger.info(f"Will download using overpass query: {overpass_query}")
-            osm_data_xml_path = download_osm_data_from_overpass_api(
-                overpass_query,
-                os.path.join(xmls_download_dir, f"{area.get("name")}.xml"),
-                session,
-            )
-            area_dict["name"] = area.get("name")
-            area_dict["xml_file_path"] = osm_data_xml_path
-            areas_xml_list.append(area_dict)
-        areas_processed_dict["areas"] = areas_xml_list
-        write_json_to_run_dir(run_dir, "areas_xml_file_path.json", areas_processed_dict)
-
-    if args.dry_run:
-        logger.info("Dry running, ending here")
-        return 0
-
-    # extract all unique way tag keys so osmnx retains them when parsing the graph
+     # extract all unique way tag keys so osmnx retains them when parsing the graph
     osm_xml_tree = ET.parse(osm_data_xml_path)
     osm_xml_root = osm_xml_tree.getroot()
     if osm_xml_root.tag != 'osm':
         os.remove(osm_data_xml_path)
         logger.error("Downloaded file is not valid OSM XML (root tag: <%s>). File deleted, please retry.", osm_xml_root.tag)
-        return 2
     remark = osm_xml_root.find('remark')
     if remark is not None and remark.text:
         logger.warning("Overpass API remark: %s", remark.text.strip())
@@ -229,16 +187,27 @@ def main(args: argparse.Namespace) -> int:
     ox.settings.osm_xml_way_tags = way_tags
 
     # build graph from the downloaded OSM XML, or load cached graphml
-    filepath = os.path.join(LTS_FILES_OUTPUT_DIR, f"{city.lower()}.graphml")
-    if os.path.exists(filepath):
-        logger.info("Loading saved graph %s", filepath)
-        city_graphml = ox.load_graphml(filepath)
+    area_graphml_filepath = os.path.join(graphml_dir, f"{area_name}.graphml")
+
+    if os.path.exists(area_graphml_filepath):
+        logger.info("Loading saved graph %s", area_graphml_filepath)
+        area_graphml = ox.load_graphml(area_graphml_filepath)
     else:
         logger.info("Building graph from %s", osm_data_xml_path)
-        city_graphml = ox.graph_from_xml(osm_data_xml_path, retain_all=True, simplify=False)
-        logger.info("Saving graph %s", filepath)
-        ox.save_graphml(city_graphml, filepath)
+        area_graphml = ox.graph_from_xml(osm_data_xml_path, retain_all=True, simplify=False)
+        logger.info("Saving graph %s", area_graphml_filepath)
+        ox.save_graphml(area_graphml, area_graphml_filepath)
+    return area_graphml_filepath
 
+def calculate_lts(run_dir: Path, area_name: str, area_graphml_path: str) -> dict[str, Any]:
+    geojson_dir = run_dir / "lts_geojson"
+    geojson_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir = run_dir / "lts_csv"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    graphml_dir = run_dir / "lts_graphml"
+    graphml_dir.mkdir(parents=True, exist_ok=True)
+
+    area_graphml = ox.load_graphml(area_graphml_path)
     # plot downloaded graph - this is slow for a large area
     #fig, ax = ox.plot_graph(city_graphml, node_size=0, edge_color="w", edge_linewidth=0.2)
 
@@ -247,7 +216,7 @@ def main(args: argparse.Namespace) -> int:
     # Start with is biking allowed, get edges where biking is not *not* allowed.
 
     # convert graph to node and edge GeoPandas GeoDataFrames
-    gdf_nodes, gdf_edges = ox.graph_to_gdfs(city_graphml)
+    gdf_nodes, gdf_edges = ox.graph_to_gdfs(area_graphml)
     logger.info(f"Gdf edges shape: {gdf_edges.shape}", )
     gdf_allowed, gdf_not_allowed = biking_permitted(gdf_edges)
     logger.info(f"Gdf allowed shape: {gdf_allowed.shape}")
@@ -411,36 +380,100 @@ def main(args: argparse.Namespace) -> int:
         gdf_nodes.loc[node,'message'] = message
         gdf_nodes.loc[node,'lts'] = node_lts # assign node lts
 
+    gdf_nodes_filtered = gdf_nodes[gdf_nodes['lts'].between(1, 4, inclusive='both')]
+
     # Save data for plotting
-    gdf_nodes_csv_file_path = os.path.join(LTS_FILES_OUTPUT_DIR, f"gdf_nodes_{city.lower()}.csv")
+    gdf_nodes_csv_file_path = os.path.join(csv_dir, f"gdf_nodes_{area_name}.csv")
     logger.info(f"Saving lts nodes csv to: {gdf_nodes_csv_file_path}")
-    gdf_nodes.to_csv(gdf_nodes_csv_file_path, index=True)
+    gdf_nodes_filtered.to_csv(gdf_nodes_csv_file_path, index=True)
 
     # Save GeoJSON
-    gdf_nodes_geojson_file_path = os.path.join(LTS_FILES_OUTPUT_DIR, f"gdf_nodes_{city.lower()}.geojson")
+    gdf_nodes_geojson_file_path = os.path.join(geojson_dir, f"gdf_nodes_{area_name}.geojson")
     logger.info(f"Saving lts nodes to: {gdf_nodes_geojson_file_path}")
-    gdf_nodes.to_file(gdf_nodes_geojson_file_path, driver="GeoJSON")
+    gdf_nodes_filtered.to_file(gdf_nodes_geojson_file_path, driver="GeoJSON")
 
     all_lts_small = all_lts[['osmid', 'lanes', 'name', 'highway', 'maxspeed', 'geometry', 'length', 'rule', 'lts',
                             'lanes_assumed', 'maxspeed_assumed', 'message', 'short_message']]
 
+    # Filter to keep lts only between 1-4
+    all_lts_small_filtered = all_lts_small[all_lts_small['lts'].between(1, 4)]
 
-    all_lts_csv_file_path = os.path.join(LTS_FILES_OUTPUT_DIR, f"all_lts_{city.lower()}.csv")
+    all_lts_csv_file_path = os.path.join(csv_dir, f"all_lts_{area_name}.csv")
     logger.info(f"Saving all lts csv to: {all_lts_csv_file_path}")
-    all_lts_small.to_csv(all_lts_csv_file_path, index=True)
+    all_lts_small_filtered.to_csv(all_lts_csv_file_path, index=True)
 
-    all_lts_geojson_file_path = os.path.join(LTS_FILES_OUTPUT_DIR, f"all_lts_{city.lower()}.geojson")
+    all_lts_geojson_file_path = os.path.join(geojson_dir, f"all_lts_{area_name}.geojson")
     logger.info(f"Saving all lts geojson to: {all_lts_geojson_file_path}")
-    all_lts_small.to_file(all_lts_geojson_file_path, driver="GeoJSON")
+    all_lts_small_filtered.to_file(all_lts_geojson_file_path, driver="GeoJSON")
 
     # make graph with LTS information
-    city_graphml_lts = ox.graph_from_gdfs(gdf_nodes, all_lts_small)
+    all_lts_graphml = ox.graph_from_gdfs(gdf_nodes, all_lts_small_filtered)
 
     # save LTS graph
-    city_lts_graphml_filepath = os.path.join(LTS_FILES_OUTPUT_DIR, f"{city.lower()}_lts.graphml")
-    logger.info(f"Saving city lts graphml to: {city_lts_graphml_filepath}")
-    ox.save_graphml(city_graphml_lts, city_lts_graphml_filepath)
+    all_lts_graphml_filepath = os.path.join(graphml_dir, f"{area_name}_lts.graphml")
+    logger.info(f"Saving city lts graphml to: {all_lts_graphml_filepath}")
+    ox.save_graphml(all_lts_graphml, all_lts_graphml_filepath)
 
+    lts_outputs = {"area_name": area_name}
+    lts_outputs["lts_csv"] = all_lts_csv_file_path
+    lts_outputs["lts_geojson"] = all_lts_geojson_file_path
+    lts_outputs["lts_graphml"] = all_lts_graphml_filepath
+    lts_outputs["gdf_nodes_geojson"] = gdf_nodes_geojson_file_path
+
+    return lts_outputs
+
+def main(args: argparse.Namespace) -> int:
+    run_dir = create_run_directory(args)
+    query_file = args.query_json_file
+    areas_processed_dict = {}
+
+    if args.osm_file:
+        if not os.path.isfile(args.osm_file):
+            logger.error("Invalid --osm-file path: %a", args.osm_file)
+            return 2
+        osm_data_xml_path = args.osm_file
+        logger.info("Using existing osm file %s", osm_data_xml_path)
+    elif args.downloaded_xml_json_map:
+        if not os.path.isfile(args.downloaded_xml_json_map):
+            logger.error("Invalid --downloaded-xml-json-map: %a", args.downloaded_xml_json_map)
+            return 2
+        areas_processed_dict = json.loads(Path(args.downloaded_xml_json_map).read_text("utf-8"))
+    elif args.query_json_file:
+        if not os.path.isfile(args.query_json_file):
+            logger.error("Invalid --query-json-file path: %a", args.query_json_file)
+            return 2
+        logger.info("Using query file %s to download osm data from overpass api", args.query_json_file)
+        query_json = json.loads(Path(query_file).read_text(encoding="utf-8"))
+        logger.info(f"Number of areas to download: {len(query_json.get("areas"))}")
+        areas_xml_list = []
+        xmls_download_dir = run_dir / "xmls"
+        xmls_download_dir.mkdir()
+        session = _make_overpass_session()
+        for area in query_json.get("areas"):
+            area_dict = {}
+            logger.info(f"Processing area: {area.get("name")}, Aread Id: {area.get("wikidata_id")}")
+            overpass_query = build_overpass_query(area.get("wikidata_id"))
+            logger.info(f"Downloading osm data using overpass query: {overpass_query}")
+            osm_data_xml_path = download_osm_data_from_overpass_api(
+                overpass_query,
+                os.path.join(xmls_download_dir, f"{area.get("name")}.xml"),
+                session,
+            )
+            area_dict["name"] = area.get("name")
+            area_dict["xml_file_path"] = osm_data_xml_path
+            areas_xml_list.append(area_dict)
+        areas_processed_dict["areas"] = areas_xml_list
+        write_json_to_run_dir(run_dir, "areas_xml_file_path.json", areas_processed_dict)
+    areas_lts_outputs = {"areas": []}
+    areas_lts_outputs_list =  []
+    for processed_area in areas_processed_dict.get("areas"):
+        logger.info(f"Processing area {processed_area.get("name")}, XML filepath: {processed_area.get("xml_file_path")}")
+        area_graphml_filepath = generate_graphml(run_dir, processed_area.get("name"), processed_area.get("xml_file_path"))
+        area_lts_output = calculate_lts(run_dir, processed_area.get("name"), area_graphml_filepath)
+        areas_lts_outputs_list.append(area_lts_output)
+    areas_lts_outputs["areas"] = areas_lts_outputs_list
+
+    write_json_to_run_dir(run_dir, "lts_outputs.json", areas_lts_outputs)
     return 0
 
 if __name__ == "__main__":

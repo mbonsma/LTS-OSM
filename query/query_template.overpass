@@ -1,4 +1,4 @@
-[timeout:600][out:xml][maxsize:300000000];
+[timeout:600][out:xml][maxsize:500000000];
 area
   ["$key"="$value"];
 (way["highway"]["area"!~"yes"]["access"!~"private"]["highway"!~"abandoned|bus_guideway|corridor|elevator|escalator|motor|planned|platform|proposed|raceway|steps"]["bicycle"!~"no"]["service"!~"private"](area);
