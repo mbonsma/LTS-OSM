@@ -6,6 +6,7 @@ import numpy as np
 import os
 import osmnx as ox
 import pandas as pd
+import geopandas as gpd
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -474,6 +475,21 @@ def main(args: argparse.Namespace) -> int:
     areas_lts_outputs["areas"] = areas_lts_outputs_list
 
     write_json_to_run_dir(run_dir, "lts_outputs.json", areas_lts_outputs)
+
+    if len(areas_lts_outputs.get("areas")) > 1:
+        #Combining geojsons
+        lts_combined_geojson_dir = run_dir / "lts_geojson" / "combined"
+        lts_combined_geojson_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"Combining geojsons")
+        lts_gdf_list = []
+        for lts_area in areas_lts_outputs.get("areas"):
+            logger.info(f"Adding lts for {lts_area['area_name']}, gejson: {lts_area['lts_geojson']}")
+            lts_gdf_list.append(gpd.read_file(lts_area["lts_geojson"]))
+        lts_combined_gdf = pd.concat(lts_gdf_list, ignore_index=True)
+        lts_combined_file_path = os.path.join(lts_combined_geojson_dir, "all_lts_combined.geojson")
+        lts_combined_gdf.to_file(lts_combined_file_path, driver="GeoJSON")
+
     return 0
 
 if __name__ == "__main__":
