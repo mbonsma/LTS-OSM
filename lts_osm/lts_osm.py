@@ -22,7 +22,6 @@ from rich.progress import (
 )
 from datetime import datetime
 from pathlib import Path
-from tqdm import tqdm
 from string import Template
 from typing import Any
 
@@ -355,31 +354,22 @@ def calculate_lts(run_dir: Path, area_name: str, area_graphml_path: str) -> dict
     # - Assigned LTS2 to signalized intersections where a low-stress (LTS1/ 2) link crosses a high-stress (LTS3/4) link.
 
     gdf_nodes['highway'].value_counts()
-    gdf_nodes['lts'] = np.nan # make lts column
-    gdf_nodes["message"] = ""  # make message column
 
-    for node in tqdm(gdf_nodes.index):
-        try:
-            edges = all_lts.loc[node]
-        except:
-            #print("Node not found in edges: %s" %node)
-            gdf_nodes.loc[node, 'message'] = "Node not found in edges"
-            continue
-        control = gdf_nodes.loc[node,'highway'] # if there is a traffic control
-        max_lts = edges['lts'].max()
-        node_lts = int(max_lts) # set to max of intersecting roads
-        message = "Node LTS is max intersecting LTS"
-        if node_lts > 2:
-            if control == 'traffic_signals':
-                node_lts = 2
-                message = "LTS 3-4 with traffic signals"
-        elif node_lts <= 2:
-            if control == 'traffic_signals' or control == 'stop':
-                node_lts = 1
-                message = "LTS 1-2 with traffic signals or stop"
+    # Vectorized node LTS: max LTS of all intersecting edges per node
+    node_max_lts = all_lts['lts'].groupby(level=0).max().rename('lts')
+    gdf_nodes = gdf_nodes.join(node_max_lts)
+    gdf_nodes['lts'] = gdf_nodes['lts'].fillna(0).astype(int)
+    gdf_nodes['message'] = np.where(gdf_nodes['lts'] == 0, "Node not found in edges", "Node LTS is max intersecting LTS")
 
-        gdf_nodes.loc[node,'message'] = message
-        gdf_nodes.loc[node,'lts'] = node_lts # assign node lts
+    # Signals reduce LTS 3/4 → 2
+    mask_signals_high = (gdf_nodes['lts'] > 2) & (gdf_nodes['highway'] == 'traffic_signals')
+    gdf_nodes.loc[mask_signals_high, ['lts', 'message']] = [2, "LTS 3-4 with traffic signals"]
+
+    # Signals or stop signs reduce LTS 1/2 → 1
+    mask_control_low = (gdf_nodes['lts'].between(1, 2)) & (
+        gdf_nodes['highway'].isin(['traffic_signals', 'stop'])
+    )
+    gdf_nodes.loc[mask_control_low, ['lts', 'message']] = [1, "LTS 1-2 with traffic signals or stop"]
 
     gdf_nodes_filtered = gdf_nodes[gdf_nodes['lts'].between(1, 4, inclusive='both')]
 
@@ -484,7 +474,7 @@ def main(args: argparse.Namespace) -> int:
         logger.info(f"Combining geojsons")
         lts_gdf_list = []
         for lts_area in areas_lts_outputs.get("areas"):
-            logger.info(f"Adding lts for {lts_area['area_name']}, gejson: {lts_area['lts_geojson']}")
+            logger.info(f"Adding lts for {lts_area['area_name']}, geojson: {lts_area['lts_geojson']}")
             lts_gdf_list.append(gpd.read_file(lts_area["lts_geojson"]))
         lts_combined_gdf = pd.concat(lts_gdf_list, ignore_index=True)
         lts_combined_file_path = os.path.join(lts_combined_geojson_dir, "all_lts_combined.geojson")
