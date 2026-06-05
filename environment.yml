@@ -1,6 +1,7 @@
 name: lts
 channels:
   - defaults
+  - conda-forge
 dependencies:
   - pandas
   - python=3
@@ -14,4 +15,5 @@ dependencies:
   - matplotlib-scalebar
   - seaborn
   - osmnx
+  - tqdm
 prefix: /home/madeleine/miniconda3/envs/geo
