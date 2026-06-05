@@ -1,0 +1,17 @@
+name: lts
+channels:
+  - defaults
+dependencies:
+  - pandas
+  - python=3
+  - matplotlib
+  - geopandas
+  - scipy
+  - numpy
+  - contextily
+  - jupyterlab
+  - jupytext
+  - matplotlib-scalebar
+  - seaborn
+  - osmnx
+prefix: /home/madeleine/miniconda3/envs/geo
